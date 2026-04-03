@@ -1,0 +1,46 @@
+yourdomain.com {
+    # 【维持原有配置】开启压缩。Caddy默认就会跳过视频/图片，只压缩文本和API
+    encode gzip zstd
+
+    # 【新增优化：海报墙缓存】让客户端缓存海报图片，极大地提升网页/APP的海报加载速度
+    @emby_images {
+        path /emby/Items/*/Images/* /Items/*/Images/* /web/*
+    }
+    header @emby_images Cache-Control "public, max-age=2592000, immutable"
+
+    # 1. 拦截真正的视频流请求 (维持原有完美运行的格式)
+    @stream {
+        path /storage/*
+    }
+    handle @stream {
+        reverse_proxy https://stream.emby.com {
+            header_up Host stream.emby.com
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+
+    # 2. 处理 Emby 主站请求 (维持原有完美运行的格式)
+    handle {
+        replace {
+            "https://www.emby.com" "https://yourdomain.com"
+            "https:\\/\\/www.emby.com" "https:\\/\\/yourdomain.com"
+            
+            "https://stream.emby.com" "https://yourdomain.com"
+            "https:\\/\\/stream.emby.com" "https:\\/\\/yourdomain.com"
+
+            "https%3A%2F%2Fwww.emby.com" "https%3A%2F%2Fyourdomain.com"
+            "https%3A%2F%2Fstream.emby.com" "https%3A%2F%2Fyourdomain.com"
+        }
+
+        reverse_proxy https://www.emby.com {
+            header_up Host www.emby.com
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up -Accept-Encoding
+
+            header_down Location "(.*)stream\.emby\.com(.*)" "${1}yourdomain.com${2}"
+            header_down Location "(.*)www\.emby\.com(.*)" "${1}yourdomain.com${2}"
+        }
+    }
+}
