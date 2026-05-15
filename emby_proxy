@@ -10,7 +10,7 @@ yourdomain.com {
 
     # 1. 拦截真正的视频流请求 (维持原有完美运行的格式)
     @stream {
-        path /storage/*
+        path_regexp storage_stream ^.*/storage/.*
     }
     handle @stream {
         reverse_proxy https://stream.emby.com {
