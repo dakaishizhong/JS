@@ -1,3 +1,19 @@
+  GNU nano 7.2                                               Caddyfile                                                         
+# The Caddyfile is an easy way to configure your Caddy web server.
+# Unless the file starts with a global options block, the first
+# uncommented line is always the address of your site.
+#
+# To use your own domain name (with automatic HTTPS), first make
+# sure your domain's A/AAAA DNS records are properly pointed to
+# this machine's public IP, then replace ":80" below with your
+# domain name.
+
+# 【重要】：必须在全局配置声明 replace 插件的执行顺序
+{
+    order replace after encode
+    debug
+}
+
 yourdomain.com {
     # 【维持原有配置】开启压缩。Caddy默认就会跳过视频/图片，只压缩文本和API
     encode gzip zstd
