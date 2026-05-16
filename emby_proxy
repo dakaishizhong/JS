@@ -1,69 +1,82 @@
-  GNU nano 7.2                                               Caddyfile                                                         
-# The Caddyfile is an easy way to configure your Caddy web server.
-# Unless the file starts with a global options block, the first
-# uncommented line is always the address of your site.
-#
-# To use your own domain name (with automatic HTTPS), first make
-# sure your domain's A/AAAA DNS records are properly pointed to
-# this machine's public IP, then replace ":80" below with your
-# domain name.
-
-# 【重要】：必须在全局配置声明 replace 插件的执行顺序
 {
     order replace after encode
-    debug
+#debug
 }
 
-yourdomain.com {
-    # 【维持原有配置】开启压缩。Caddy默认就会跳过视频/图片，只压缩文本和API
-    encode gzip zstd
+{$PUBLIC_DOMAIN} {
+    encode zstd gzip
 
-    # 【新增优化：海报墙缓存】让客户端缓存海报图片，极大地提升网页/APP的海报加载速度
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        -Server
+    }
+
     @emby_images {
-        path /emby/Items/*/Images/* /Items/*/Images/* /web/*
+        path /Items/*/Images/* /emby/Items/*/Images/* /Users/*/Images/* /emby/Users/*/Images/*
     }
-    handle @emby_images {
-        header Cache-Control "public, max-age=2592000, immutable"
-        reverse_proxy https://www.lilyemby.com {
-            header_up Host www.lilyemby.com
-            header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
-        }
-    }
+    header @emby_images >Cache-Control "public, max-age=2592000, immutable"
 
-    # 1. 拦截真正的视频流请求 (维持原有完美运行的格式)
+    @web_static {
+        path_regexp web_static (?i)^/(emby/)?web/.*\.(js|css|woff2?|ttf|ico|png|jpe?g|webp|svg)$
+    }
+    header @web_static >Cache-Control "public, max-age=86400"
+
+    @web_entry {
+        path / /web/ /web/index.html /emby/web/ /emby/web/index.html
+    }
+    header @web_entry >Cache-Control "no-cache"
+
     @stream {
         path_regexp storage_stream ^.*/storage/.*
     }
     handle @stream {
-        reverse_proxy https://stream.emby.com {
-            header_up Host stream.emby.com
+        reverse_proxy https://{$STREAM_UPSTREAM} {
+            header_up Host {$STREAM_UPSTREAM}
             header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
+
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 20s
+            }
         }
     }
 
-    # 2. 处理 Emby 主站请求 (维持原有完美运行的格式)
     handle {
         replace {
-            "https://www.emby.com" "https://yourdomain.com"
-            "https:\\/\\/www.emby.com" "https:\\/\\/yourdomain.com"
-            
-            "https://stream.emby.com" "https://yourdomain.com"
-            "https:\\/\\/stream.emby.com" "https:\\/\\/yourdomain.com"
+            match {
+                header Content-Type text/html*
+                header Content-Type text/css*
+                header Content-Type application/json*
+                header Content-Type application/javascript*
+                header Content-Type text/javascript*
+                header Content-Type application/x-mpegURL*
+                header Content-Type application/vnd.apple.mpegurl*
+            }
 
-            "https%3A%2F%2Fwww.emby.com" "https%3A%2F%2Fyourdomain.com"
-            "https%3A%2F%2Fstream.emby.com" "https%3A%2F%2Fyourdomain.com"
+            "https://{$MAIN_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
+            "https:\\/\\/{$MAIN_UPSTREAM}" "https:\\/\\/{$PUBLIC_DOMAIN}"
+            "https%3A%2F%2F{$MAIN_UPSTREAM}" "https%3A%2F%2F{$PUBLIC_DOMAIN}"
+
+            "https://{$STREAM_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
+            "https:\\/\\/{$STREAM_UPSTREAM}" "https:\\/\\/{$PUBLIC_DOMAIN}"
+            "https%3A%2F%2F{$STREAM_UPSTREAM}" "https%3A%2F%2F{$PUBLIC_DOMAIN}"
         }
 
-        reverse_proxy https://www.emby.com {
-            header_up Host www.emby.com
+        reverse_proxy https://{$MAIN_UPSTREAM} {
+            header_up Host {$MAIN_UPSTREAM}
             header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-For {remote_host}
-            header_up -Accept-Encoding
+            header_up Accept-Encoding identity
 
-            header_down Location "(.*)stream\.emby\.com(.*)" "${1}yourdomain.com${2}"
-            header_down Location "(.*)www\.emby\.com(.*)" "${1}yourdomain.com${2}"
+            header_down Location "https://{$MAIN_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
+            header_down Location "https://{$STREAM_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
+            header_down Set-Cookie "Domain={$MAIN_UPSTREAM}" "Domain={$PUBLIC_DOMAIN}"
+
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 20s
+            }
         }
     }
 }
