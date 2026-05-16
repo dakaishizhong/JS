@@ -22,7 +22,14 @@ yourdomain.com {
     @emby_images {
         path /emby/Items/*/Images/* /Items/*/Images/* /web/*
     }
-    header @emby_images Cache-Control "public, max-age=2592000, immutable"
+    handle @emby_images {
+        header Cache-Control "public, max-age=2592000, immutable"
+        reverse_proxy https://www.lilyemby.com {
+            header_up Host www.lilyemby.com
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
 
     # 1. 拦截真正的视频流请求 (维持原有完美运行的格式)
     @stream {
