@@ -1,6 +1,32 @@
 {
     order replace after encode
-#debug
+    # debug
+}
+
+# 推流反代公共配置
+(stream_proxy) {
+    reverse_proxy https://{args[0]} {
+        header_up Host {args[0]}
+        header_up X-Real-IP {remote_host}
+
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 20s
+        }
+    }
+}
+
+# 把推流域名改写为：
+# https://PUBLIC_DOMAIN/__stream/<节点>/...
+#
+# 同时兼容：
+# 1. 普通 URL
+# 2. JSON 转义 URL
+# 3. URL Encode URL
+(stream_rewrite) {
+    "https://{args[0]}" "https://{$PUBLIC_DOMAIN}/__stream/{args[1]}"
+    "https:\\/\\/{args[0]}" "https:\\/\\/{$PUBLIC_DOMAIN}\\/__stream\\/{args[1]}"
+    "https%3A%2F%2F{args[0]}" "https%3A%2F%2F{$PUBLIC_DOMAIN}%2F__stream%2F{args[1]}"
 }
 
 {$PUBLIC_DOMAIN} {
@@ -13,35 +39,68 @@
         -Server
     }
 
+    # Emby 图片
     @emby_images {
         path /Items/*/Images/* /emby/Items/*/Images/* /Users/*/Images/* /emby/Users/*/Images/*
     }
     header @emby_images >Cache-Control "public, max-age=2592000, immutable"
 
+    # Web 静态资源
     @web_static {
         path_regexp web_static (?i)^/(emby/)?web/.*\.(js|css|woff2?|ttf|ico|png|jpe?g|webp|svg)$
     }
     header @web_static >Cache-Control "public, max-age=86400"
 
+    # Web 入口
     @web_entry {
         path / /web/ /web/index.html /emby/web/ /emby/web/index.html
     }
     header @web_entry >Cache-Control "no-cache"
 
-    @stream {
-        path_regexp storage_stream ^.*/storage/.*
-    }
-    handle @stream {
-        reverse_proxy https://{$STREAM_UPSTREAM} {
-            header_up Host {$STREAM_UPSTREAM}
-            header_up X-Real-IP {remote_host}
 
-            transport http {
-                dial_timeout 5s
-                response_header_timeout 20s
-            }
-        }
+    # =========================
+    # 推流节点
+    # =========================
+
+    handle_path /__stream/hk1/* {
+        import stream_proxy {$STREAM_HK1}
     }
+
+    handle_path /__stream/hk2/* {
+        import stream_proxy {$STREAM_HK2}
+    }
+
+    handle_path /__stream/hk3/* {
+        import stream_proxy {$STREAM_HK3}
+    }
+
+    handle_path /__stream/sg/* {
+        import stream_proxy {$STREAM_SG}
+    }
+
+    handle_path /__stream/eu/* {
+        import stream_proxy {$STREAM_EU}
+    }
+
+    handle_path /__stream/us/* {
+        import stream_proxy {$STREAM_US}
+    }
+
+
+    # 兼容旧链接或上游返回的相对 /storage/ 链接
+    # 与你原来的行为一致，默认交给 hk2
+    @legacy_stream {
+        path_regexp legacy_storage ^.*/storage/.*
+    }
+
+    handle @legacy_stream {
+        import stream_proxy {$STREAM_HK2}
+    }
+
+
+    # =========================
+    # Emby 主站 / API / Web
+    # =========================
 
     handle {
         replace {
@@ -55,22 +114,34 @@
                 header Content-Type application/vnd.apple.mpegurl*
             }
 
+            # 主站域名
             "https://{$MAIN_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
             "https:\\/\\/{$MAIN_UPSTREAM}" "https:\\/\\/{$PUBLIC_DOMAIN}"
             "https%3A%2F%2F{$MAIN_UPSTREAM}" "https%3A%2F%2F{$PUBLIC_DOMAIN}"
 
-            "https://{$STREAM_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
-            "https:\\/\\/{$STREAM_UPSTREAM}" "https:\\/\\/{$PUBLIC_DOMAIN}"
-            "https%3A%2F%2F{$STREAM_UPSTREAM}" "https%3A%2F%2F{$PUBLIC_DOMAIN}"
+            # 推流域名
+            import stream_rewrite {$STREAM_HK1} hk1
+            import stream_rewrite {$STREAM_HK2} hk2
+            import stream_rewrite {$STREAM_HK3} hk3
+            import stream_rewrite {$STREAM_SG} sg
+            import stream_rewrite {$STREAM_EU} eu
+            import stream_rewrite {$STREAM_US} us
         }
 
         reverse_proxy https://{$MAIN_UPSTREAM} {
             header_up Host {$MAIN_UPSTREAM}
             header_up X-Real-IP {remote_host}
+
+            # replace-response 无法直接处理上游压缩后的响应
             header_up Accept-Encoding identity
 
+            # 主站跳转
             header_down Location "https://{$MAIN_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
-            header_down Location "https://{$STREAM_UPSTREAM}" "https://{$PUBLIC_DOMAIN}"
+
+            # 推流域名跳转
+            header_down Location "https://(hk[1-3]|sg|eu|us)-stream\.lilyemby\.app" "https://{$PUBLIC_DOMAIN}/__stream/$1"
+
+            # Cookie
             header_down Set-Cookie "Domain={$MAIN_UPSTREAM}" "Domain={$PUBLIC_DOMAIN}"
 
             transport http {
